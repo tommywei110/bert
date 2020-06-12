@@ -22,7 +22,6 @@ from typing import Text
 
 import absl
 import tensorflow_model_analysis as tfma
-import tensorflow_datasets as tfds
 
 from tfx.components.example_gen.import_example_gen.component import ImportExampleGen
 from tfx.components import Evaluator
@@ -36,6 +35,7 @@ from tfx.components import Transform
 from tfx.components.trainer.executor import GenericExecutor
 from tfx.components.base import executor_spec 
 from tfx.utils.dsl_utils import tfrecord_input
+import tensorflow_text
 
 from tfx.proto import trainer_pb2 
 

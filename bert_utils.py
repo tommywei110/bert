@@ -12,20 +12,19 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
 from typing import List, Text
 
+import os
 import absl
 import tensorflow as tf
 from tensorflow import keras
 import tensorflow_transform as tft
 import tensorflow_hub as hub
-import tensorflow_text
-from tensorflow_text.python.ops import bert_tokenizer
+import tensorflow_text as text
 
 from tfx.components.trainer.executor import TrainerFnArgs
 
@@ -33,6 +32,149 @@ _TRAIN_BATCH_SIZE = 512
 _TRAIN_DATA_SIZE = 51200
 _EVAL_BATCH_SIZE = 512
 _LABEL_KEY = "sentiment"
+
+def regex_split_with_offsets(input,
+                             delim_regex_pattern,
+                             keep_delim_regex_pattern="",
+                             name=None):
+  r"""Split `input` by delimiters that match a regex pattern; returns offsets.
+  `regex_split_with_offsets` will split `input` using delimiters that match a
+  regex pattern in `delim_regex_pattern`. Here is an example:
+  ```
+  text_input=["hello there"]
+  # split by whitespace
+  result, begin, end = regex_split_with_offsets(text_input, "\s")
+  # result = [["hello", "there"]]
+  # begin = [[0, 7]]
+  # end = [[5, 11]]
+  ```
+  By default, delimiters are not included in the split string results.
+  Delimiters may be included by specifying a regex pattern
+  `keep_delim_regex_pattern`. For example:
+  ```
+  text_input=["hello there"]
+  # split by whitespace
+  result, begin, end = regex_split_with_offsets(text_input, "\s", "\s")
+  # result = [["hello", " ", "there"]]
+  # begin = [[0, 5, 7]]
+  # end = [[5, 6, 11]]
+  ```
+  If there are multiple delimiters in a row, there are no empty splits emitted.
+  For example:
+  ```
+  text_input=["hello  there"]  # two continuous whitespace characters
+  # split by whitespace
+  result, begin, end = regex_split_with_offsets(text_input, "\s")
+  # result = [["hello", "there"]]
+  ```
+  See https://github.com/google/re2/wiki/Syntax for the full list of supported
+  expressions.
+  Args:
+    input: A Tensor or RaggedTensor of string input.
+    delim_regex_pattern: A string containing the regex pattern of a delimiter.
+    keep_delim_regex_pattern: (optional) Regex pattern of delimiters that should
+      be kept in the result.
+    name: (optional) Name of the op.
+  Returns:
+    A tuple of RaggedTensors containing:
+      (split_results, begin_offsets, end_offsets)
+    where tokens is of type string, begin_offsets and end_offsets are of type
+    int64.
+  """
+  delim_regex_pattern = b"".join(
+      [b"(", delim_regex_pattern.encode("utf-8"), b")"])
+  keep_delim_regex_pattern = b"".join(
+      [b"(", keep_delim_regex_pattern.encode("utf-8"), b")"])
+
+  # Convert input to ragged or tensor
+  input = ragged_tensor.convert_to_tensor_or_ragged_tensor(
+      input, dtype=dtypes.string)
+
+  if ragged_tensor.is_ragged(input):
+    # send flat_values to regex_split op.
+    tokens, begin_offsets, end_offsets, row_splits = (
+        gen_regex_split_ops.regex_split_with_offsets(
+            input.flat_values,
+            delim_regex_pattern,
+            keep_delim_regex_pattern,
+            name=name))
+
+    # Pack back into original ragged tensor
+    tokens_rt = ragged_tensor.RaggedTensor.from_row_splits(tokens, row_splits)
+    tokens_rt = ragged_tensor.RaggedTensor.from_row_splits(
+        tokens_rt, input.row_splits)
+    begin_offsets_rt = ragged_tensor.RaggedTensor.from_row_splits(
+        begin_offsets, row_splits)
+    begin_offsets_rt = ragged_tensor.RaggedTensor.from_row_splits(
+        begin_offsets_rt, input.row_splits)
+    end_offsets_rt = ragged_tensor.RaggedTensor.from_row_splits(
+        end_offsets, row_splits)
+    end_offsets_rt = ragged_tensor.RaggedTensor.from_row_splits(
+        end_offsets_rt, input.row_splits)
+    return tokens_rt, begin_offsets_rt, end_offsets_rt
+
+  else:
+    # send flat_values to regex_split op.
+    tokens, begin_offsets, end_offsets, row_splits = (
+        gen_regex_split_ops.regex_split_with_offsets(input, delim_regex_pattern,
+                                                     keep_delim_regex_pattern))
+
+    # Pack back into ragged tensors
+    tokens_rt = ragged_tensor.RaggedTensor.from_row_splits(
+        tokens, row_splits=row_splits)
+    begin_offsets_rt = ragged_tensor.RaggedTensor.from_row_splits(
+        begin_offsets, row_splits=row_splits)
+    end_offsets_rt = ragged_tensor.RaggedTensor.from_row_splits(
+        end_offsets, row_splits=row_splits)
+    return tokens_rt, begin_offsets_rt, end_offsets_rt
+
+
+# pylint: disable= redefined-builtin
+def regex_split(input,
+                delim_regex_pattern,
+                keep_delim_regex_pattern="",
+                name=None):
+  r"""Split `input` by delimiters that match a regex pattern.
+  `regex_split` will split `input` using delimiters that match a
+  regex pattern in `delim_regex_pattern`. Here is an example:
+  ```
+  text_input=["hello there"]
+  # split by whitespace
+  result, begin, end = regex_split_with_offsets(text_input, "\s")
+  # result = [["hello", "there"]]
+  ```
+  By default, delimiters are not included in the split string results.
+  Delimiters may be included by specifying a regex pattern
+  `keep_delim_regex_pattern`. For example:
+  ```
+  text_input=["hello there"]
+  # split by whitespace
+  result, begin, end = regex_split_with_offsets(text_input, "\s", "\s")
+  # result = [["hello", " ", "there"]]
+  ```
+  If there are multiple delimiters in a row, there are no empty splits emitted.
+  For example:
+  ```
+  text_input=["hello  there"]  # two continuous whitespace characters
+  # split by whitespace
+  result, begin, end = regex_split_with_offsets(text_input, "\s")
+  # result = [["hello", "there"]]
+  ```
+  See https://github.com/google/re2/wiki/Syntax for the full list of supported
+  expressions.
+  Args:
+    input: A Tensor or RaggedTensor of string input.
+    delim_regex_pattern: A string containing the regex pattern of a delimiter.
+    keep_delim_regex_pattern: (optional) Regex pattern of delimiters that should
+      be kept in the result.
+    name: (optional) Name of the op.
+  Returns:
+    A RaggedTensors containing of type string containing the split string
+    pieces.
+  """
+  tokens, _, _ = regex_split_with_offsets(input, delim_regex_pattern,
+                                          keep_delim_regex_pattern, name)
+  return tokens
 
 def _gzip_reader_fn(filenames):
   """Small utility returning a record reader that can read gzip'ed files."""
@@ -47,7 +189,7 @@ def _sentiment_to_int(sentiment):
 
 def _tokenize(stringA, stringB):
     """Tokenize the two sentences and insert appropriate tokens"""
-    tokenizer = bert_tokenizer.BertTokenizer(
+    tokenizer = text.BertTokenizer(
             "/home/tommywei/bert_mrpc/vocab.txt",
             token_out_type=tf.string,
             )
@@ -65,12 +207,14 @@ def preprocessing_fn(inputs):
   Returns:
     Map from string feature key to transformed feature operations.
   """
+  os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
   stringA = inputs['stringA']
   stringB = inputs['stringB']
   label = inputs['Quality']
   return {
           'label': label,
-          'feature': _tokenize(stringA, stringB)
+          'stringA': _tokenize(stringA, stringB),
+          'stringB': stringB
           }
 
 def _input_fn(file_pattern: List[Text],
