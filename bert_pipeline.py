@@ -35,7 +35,6 @@ from tfx.components import Transform
 from tfx.components.trainer.executor import GenericExecutor
 from tfx.components.base import executor_spec 
 from tfx.utils.dsl_utils import tfrecord_input
-import tensorflow_text
 
 from tfx.proto import trainer_pb2 
 
@@ -43,10 +42,10 @@ from tfx.orchestration import metadata
 from tfx.orchestration import pipeline 
 from tfx.orchestration.beam.beam_dag_runner import BeamDagRunner
 
-_pipeline_name = 'bert_mrpc'
+_pipeline_name = 'bert_cola'
 
-# This exmaple assumes the utility function is in ~/bert_mrpc
-_imdb_root = os.path.join(os.environ['HOME'], 'bert_mrpc')
+# This exmaple assumes the utility function is in ~/bert_cola
+_imdb_root = os.path.join(os.environ['HOME'], 'bert_cola')
 _data_root = os.path.join(_imdb_root, 'data') 
 # Python module file to inject customized logic into the TFX components. The
 # Transform and Trainer both require user-defined functions to run successfully.
@@ -90,7 +89,7 @@ def _create_pipeline(pipeline_name: Text, pipeline_root: Text, data_root: Text,
       examples=example_gen.outputs['examples'],
       schema=schema_gen.outputs['schema'],
       module_file=module_file)
-    """
+    
      # Uses user-provided Python function that trains a model using TF-Learn.
     trainer = Trainer(
       module_file=module_file,
@@ -98,9 +97,9 @@ def _create_pipeline(pipeline_name: Text, pipeline_root: Text, data_root: Text,
       examples=transform.outputs['transformed_examples'],
       transform_graph=transform.outputs['transform_graph'],
       schema=schema_gen.outputs['schema'],
-      train_args=trainer_pb2.TrainArgs(num_steps=2000),
-      eval_args=trainer_pb2.EvalArgs(num_steps=5))
-    """
+      train_args=trainer_pb2.TrainArgs(num_steps=200),
+      eval_args=trainer_pb2.EvalArgs(num_steps=100))
+    
     
     return pipeline.Pipeline(
       pipeline_name=pipeline_name,
@@ -111,7 +110,7 @@ def _create_pipeline(pipeline_name: Text, pipeline_root: Text, data_root: Text,
           schema_gen,
           example_validator,
           transform,
-          #trainer,
+          trainer,
           #model_resolver,
           #valuator,
           #pusher,
@@ -132,4 +131,4 @@ if __name__ == '__main__':
                module_file = _module_file,
                serving_model_dir = _serving_model_dir,
                metadata_path = _metadata_path,
-               direct_num_workers = 0))
+               direct_num_workers = 1))

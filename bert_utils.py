@@ -18,185 +18,36 @@ from __future__ import print_function
 
 from typing import List, Text
 
-import os
 import absl
 import tensorflow as tf
 from tensorflow import keras
 import tensorflow_transform as tft
 import tensorflow_hub as hub
-import tensorflow_text as text
+from bert_tokenizer_utils import Special_Bert_Tokenizer
+from bert_models import BertForSingleSentenceSentimentAnalysis
 
 from tfx.components.trainer.executor import TrainerFnArgs
 
-_TRAIN_BATCH_SIZE = 512
-_TRAIN_DATA_SIZE = 51200
-_EVAL_BATCH_SIZE = 512
-_LABEL_KEY = "sentiment"
-
-def regex_split_with_offsets(input,
-                             delim_regex_pattern,
-                             keep_delim_regex_pattern="",
-                             name=None):
-  r"""Split `input` by delimiters that match a regex pattern; returns offsets.
-  `regex_split_with_offsets` will split `input` using delimiters that match a
-  regex pattern in `delim_regex_pattern`. Here is an example:
-  ```
-  text_input=["hello there"]
-  # split by whitespace
-  result, begin, end = regex_split_with_offsets(text_input, "\s")
-  # result = [["hello", "there"]]
-  # begin = [[0, 7]]
-  # end = [[5, 11]]
-  ```
-  By default, delimiters are not included in the split string results.
-  Delimiters may be included by specifying a regex pattern
-  `keep_delim_regex_pattern`. For example:
-  ```
-  text_input=["hello there"]
-  # split by whitespace
-  result, begin, end = regex_split_with_offsets(text_input, "\s", "\s")
-  # result = [["hello", " ", "there"]]
-  # begin = [[0, 5, 7]]
-  # end = [[5, 6, 11]]
-  ```
-  If there are multiple delimiters in a row, there are no empty splits emitted.
-  For example:
-  ```
-  text_input=["hello  there"]  # two continuous whitespace characters
-  # split by whitespace
-  result, begin, end = regex_split_with_offsets(text_input, "\s")
-  # result = [["hello", "there"]]
-  ```
-  See https://github.com/google/re2/wiki/Syntax for the full list of supported
-  expressions.
-  Args:
-    input: A Tensor or RaggedTensor of string input.
-    delim_regex_pattern: A string containing the regex pattern of a delimiter.
-    keep_delim_regex_pattern: (optional) Regex pattern of delimiters that should
-      be kept in the result.
-    name: (optional) Name of the op.
-  Returns:
-    A tuple of RaggedTensors containing:
-      (split_results, begin_offsets, end_offsets)
-    where tokens is of type string, begin_offsets and end_offsets are of type
-    int64.
-  """
-  delim_regex_pattern = b"".join(
-      [b"(", delim_regex_pattern.encode("utf-8"), b")"])
-  keep_delim_regex_pattern = b"".join(
-      [b"(", keep_delim_regex_pattern.encode("utf-8"), b")"])
-
-  # Convert input to ragged or tensor
-  input = ragged_tensor.convert_to_tensor_or_ragged_tensor(
-      input, dtype=dtypes.string)
-
-  if ragged_tensor.is_ragged(input):
-    # send flat_values to regex_split op.
-    tokens, begin_offsets, end_offsets, row_splits = (
-        gen_regex_split_ops.regex_split_with_offsets(
-            input.flat_values,
-            delim_regex_pattern,
-            keep_delim_regex_pattern,
-            name=name))
-
-    # Pack back into original ragged tensor
-    tokens_rt = ragged_tensor.RaggedTensor.from_row_splits(tokens, row_splits)
-    tokens_rt = ragged_tensor.RaggedTensor.from_row_splits(
-        tokens_rt, input.row_splits)
-    begin_offsets_rt = ragged_tensor.RaggedTensor.from_row_splits(
-        begin_offsets, row_splits)
-    begin_offsets_rt = ragged_tensor.RaggedTensor.from_row_splits(
-        begin_offsets_rt, input.row_splits)
-    end_offsets_rt = ragged_tensor.RaggedTensor.from_row_splits(
-        end_offsets, row_splits)
-    end_offsets_rt = ragged_tensor.RaggedTensor.from_row_splits(
-        end_offsets_rt, input.row_splits)
-    return tokens_rt, begin_offsets_rt, end_offsets_rt
-
-  else:
-    # send flat_values to regex_split op.
-    tokens, begin_offsets, end_offsets, row_splits = (
-        gen_regex_split_ops.regex_split_with_offsets(input, delim_regex_pattern,
-                                                     keep_delim_regex_pattern))
-
-    # Pack back into ragged tensors
-    tokens_rt = ragged_tensor.RaggedTensor.from_row_splits(
-        tokens, row_splits=row_splits)
-    begin_offsets_rt = ragged_tensor.RaggedTensor.from_row_splits(
-        begin_offsets, row_splits=row_splits)
-    end_offsets_rt = ragged_tensor.RaggedTensor.from_row_splits(
-        end_offsets, row_splits=row_splits)
-    return tokens_rt, begin_offsets_rt, end_offsets_rt
-
-
-# pylint: disable= redefined-builtin
-def regex_split(input,
-                delim_regex_pattern,
-                keep_delim_regex_pattern="",
-                name=None):
-  r"""Split `input` by delimiters that match a regex pattern.
-  `regex_split` will split `input` using delimiters that match a
-  regex pattern in `delim_regex_pattern`. Here is an example:
-  ```
-  text_input=["hello there"]
-  # split by whitespace
-  result, begin, end = regex_split_with_offsets(text_input, "\s")
-  # result = [["hello", "there"]]
-  ```
-  By default, delimiters are not included in the split string results.
-  Delimiters may be included by specifying a regex pattern
-  `keep_delim_regex_pattern`. For example:
-  ```
-  text_input=["hello there"]
-  # split by whitespace
-  result, begin, end = regex_split_with_offsets(text_input, "\s", "\s")
-  # result = [["hello", " ", "there"]]
-  ```
-  If there are multiple delimiters in a row, there are no empty splits emitted.
-  For example:
-  ```
-  text_input=["hello  there"]  # two continuous whitespace characters
-  # split by whitespace
-  result, begin, end = regex_split_with_offsets(text_input, "\s")
-  # result = [["hello", "there"]]
-  ```
-  See https://github.com/google/re2/wiki/Syntax for the full list of supported
-  expressions.
-  Args:
-    input: A Tensor or RaggedTensor of string input.
-    delim_regex_pattern: A string containing the regex pattern of a delimiter.
-    keep_delim_regex_pattern: (optional) Regex pattern of delimiters that should
-      be kept in the result.
-    name: (optional) Name of the op.
-  Returns:
-    A RaggedTensors containing of type string containing the split string
-    pieces.
-  """
-  tokens, _, _ = regex_split_with_offsets(input, delim_regex_pattern,
-                                          keep_delim_regex_pattern, name)
-  return tokens
+_TRAIN_BATCH_SIZE = 64
+_EVAL_BATCH_SIZE = 64
+_LABEL_KEY = "label"
+_BERT_LINK = "https://tfhub.dev/tensorflow/bert_en_cased_L-12_H-768_A-12/2"
+_MAX_LEN = 128
+_EPOCHS = 1
 
 def _gzip_reader_fn(filenames):
   """Small utility returning a record reader that can read gzip'ed files."""
-  return tf.data.TFRecordDataset(filenames, compression_type='GZIP'
-          )
+  return tf.data.TFRecordDataset(
+          filenames,
+          compression_type='GZIP')
 
-def _sentiment_to_int(sentiment):
-    """Converting labels from string to integer"""
-    equality = tf.equal(sentiment, 'positive')
-    ints = tf.cast(equality, tf.int64)
-    return ints
-
-def _tokenize(stringA, stringB):
+def _tokenize(feature):
     """Tokenize the two sentences and insert appropriate tokens"""
-    tokenizer = text.BertTokenizer(
-            "/home/tommywei/bert_mrpc/vocab.txt",
-            token_out_type=tf.string,
-            )
-    stringA = tf.squeeze(stringA)
-    idA = tokenizer.tokenize(stringA)
-    #idB = tokenizer.tokenize(stringB)
-    return idA
+    vocab_dir = '/home/tommywei/bert_cola/assets/vocab.txt'
+    tokenizer = Special_Bert_Tokenizer(vocab_dir)
+    return tokenizer.tokenize_single_sentence(
+      tf.reshape(feature, [-1]),
+      max_len=_MAX_LEN)
 
 def preprocessing_fn(inputs):
   """tf.transform's callback function for preprocessing inputs.
@@ -207,14 +58,14 @@ def preprocessing_fn(inputs):
   Returns:
     Map from string feature key to transformed feature operations.
   """
-  os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
-  stringA = inputs['stringA']
-  stringB = inputs['stringB']
-  label = inputs['Quality']
+  feature = inputs['feature']
+  label = inputs['label']
+  input_word_ids, input_mask, segment_ids = _tokenize(feature)
   return {
           'label': label,
-          'stringA': _tokenize(stringA, stringB),
-          'stringB': stringB
+          'input_word_ids': input_word_ids,
+          'input_mask': input_mask,
+          'segment_ids': segment_ids
           }
 
 def _input_fn(file_pattern: List[Text],
@@ -243,27 +94,26 @@ def _input_fn(file_pattern: List[Text],
       label_key=_LABEL_KEY)
 
   return dataset
+  
+def _get_serve_tf_examples_fn(model, tf_transform_output):
+  """Returns a function that parses a serialized tf.Example."""
 
-def _build_keras_model() -> tf.keras.Model:
-  """Creates a DNN Keras model for classifying imdb data.
+  model.tft_layer = tf_transform_output.transform_features_layer()
 
-  Returns:
-    A Keras Model.
-  """
-  # The model below is built with Functional API, please refer to
-  # https://www.tensorflow.org/guide/keras/overview for all API options.
-  hub_layer = hub.KerasLayer("https://tfhub.dev/google/tf2-preview/nnlm-en-dim50-with-normalization/1", output_shape=[50],
-                           input_shape=[], dtype=tf.string)
+  @tf.function
+  def serve_tf_examples_fn(serialized_tf_examples):
+    """Returns the output to be used in the serving signature."""
+    feature_spec = tf_transform_output.raw_feature_spec()
+    feature_spec.pop(_LABEL_KEY)
+    parsed_features = tf.io.parse_example(serialized_tf_examples, feature_spec)
 
-  model = keras.Sequential()
-  model.add(hub_layer)
-  model.add(keras.layers.Dense(16, activation='relu'))
-  model.add(keras.layers.Dense(1, activation='sigmoid'))
-  model.compile(optimizer='adam',
-          loss=keras.losses.BinaryCrossentropy(from_logits=False),
-          metrics=['accuracy'])
-  model.summary()
-  return model
+    transformed_features = model.tft_layer(parsed_features)
+    # TODO(b/148082271): Remove this line once TFT 0.22 is used.
+    transformed_features.pop(_transformed_name(_LABEL_KEY), None)
+
+    return model(transformed_features)
+
+  return serve_tf_examples_fn
 
 # TFX Trainer will call this function.
 def run_fn(fn_args: TrainerFnArgs):
@@ -281,14 +131,13 @@ def run_fn(fn_args: TrainerFnArgs):
 
   #mirrored_strategy = tf.distribute.MirroredStrategy()
   # with mirrored_strategy.scope():
-  model = _build_keras_model()
-
-  steps_per_epoch = _TRAIN_DATA_SIZE / _TRAIN_BATCH_SIZE
+  bert_layer = hub.KerasLayer(_BERT_LINK, trainable=True)
+  model = BertForSingleSentenceSentimentAnalysis(bert_layer, _MAX_LEN)
 
   model.fit(
       train_dataset,
-      epochs=int(fn_args.train_steps / steps_per_epoch),
-      steps_per_epoch=steps_per_epoch,
+      epochs=_EPOCHS,
+      steps_per_epoch=fn_args.train_steps,
       validation_data=eval_dataset,
       validation_steps=fn_args.eval_steps)
 
